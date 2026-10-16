@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pac-Man Deluxe</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;min-height:100vh;background:#080808;color:#fff;font-family:"Courier New",monospace;display:flex;justify-content:center;align-items:center}
+.game-container{width:100%;max-width:440px;text-align:center;padding:10px}
+h1{margin:3px 0 8px;color:#ffe600;font-size:26px;text-shadow:0 0 12px #ffe600}
+#ui{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:8px;font-size:12px;font-weight:bold}
+.panel{background:#111;border:1px solid #244cff;border-radius:5px;padding:5px 2px}
+.panel span{display:block;color:#ffe600;margin-top:2px}
+#canvas{width:min(92vw,380px);height:auto;display:block;margin:auto;background:#000;border:3px solid #174cff;box-shadow:0 0 8px #174cff,0 0 20px #174cff}
+#message{min-height:25px;margin:7px 0;color:#ffe600;font-size:14px;font-weight:bold}
+.instructions{color:#aaa;font-size:11px;margin-bottom:6px}
+.mobile-controls{display:grid;grid-template-columns:repeat(3,60px);grid-template-rows:repeat(2,50px);gap:6px;justify-content:center;margin:8px auto}
+button{border:2px solid #244cff;background:#111;color:#fff;border-radius:10px;font-family:"Courier New",monospace;font-weight:bold;cursor:pointer;touch-action:manipulation}
+.mobile-controls button{font-size:23px}
+button:active{background:#244cff;transform:scale(.95)}
+.up{grid-column:2}.left{grid-column:1}.down{grid-column:2}.right{grid-column:3}
+.actions{display:flex;justify-content:center;gap:6px}.actions button{padding:8px 11px;font-size:12px}
+@media(min-width:600px){.mobile-controls{display:none}.instructions{font-size:13px}}
+</style>
+</head>
+<body>
+<div class="game-container">
+<h1>ᗧ PAC-MAN DELUXE</h1>
+<div id="ui">
+<div class="panel">PUNTOS<span id="score">0</span></div>
+<div class="panel">NIVEL<span id="level">1</span></div>
+<div class="panel">RÉCORD<span id="highScore">0</span></div>
+<div class="panel">VIDAS<span id="lives">❤️❤️❤️</span></div>
+</div>
+<canvas id="canvas" width="380" height="420"></canvas>
+<div id="message">Pulsa START para comenzar</div>
+<div class="instructions">Flechas / WASD · P = Pausa</div>
+<div class="mobile-controls">
+<button class="up" data-direction="up">▲</button>
+<button class="left" data-direction="left">◀</button>
+<button class="down" data-direction="down">▼</button>
+<button class="right" data-direction="right">▶</button>
+</div>
+<div class="actions">
+<button id="startButton">▶ START</button>
+<button id="pauseButton">⏸ PAUSA</button>
+<button id="restartButton">↻ REINICIAR</button>
+</div>
+</div>
+<script>
+const canvas=document.getElementById("canvas"),ctx=canvas.getContext("2d");
+const TILE=20,ROWS=21,COLS=19;
+let score=0,level=1,lives=3,highScore=Number(localStorage.getItem("pacmanHighScore"))||0;
+let gameRunning=false,paused=false,gameFinished=false,pelletsRemaining=0,powerMode=false,powerTimer=0,animationId=0,lastTime=0,audioContext=null;
+const originalMap=[
+"1111111111111111111","1000000001000000001","1011011101011101101","1011011101011101101",
+"1000000000000000001","1011010111110101101","1000010001000100001","1111011121211101111",
+"2221022222222101222","1111012111210101111","2222022222222022222","1111012111110101111",
+"2221022222222101222","1111012111110101111","1000000001000000001","1011011101011101101",
+"1001000002000001001","1101010111110101011","1000010001000100001","1011111101011111101",
+"1111111111111111111"].map(r=>[...r].map(Number));
+let map;
+function initAudio(){try{if(!audioContext)audioContext=new(window.AudioContext||window.webkitAudioContext)();if(audioContext.state==="suspended")audioContext.resume()}catch(e){}}
+function playSound(freq,duration=.07,type="square"){try{initAudio();if(!audioContext)return;const o=audioContext.createOscillator(),g=audioContext.createGain();o.type=type;o.frequency.value=freq;g.gain.setValueAtTime(.045,audioContext.currentTime);g.gain.exponentialRampToValueAtTime(.001,audioContext.currentTime+duration);o.connect(g);g.connect(audioContext.destination);o.start();o.stop(audioContext.currentTime+duration)}catch(e){}}
+function resetMap(){map=originalMap.map(r=>r.slice());pelletsRemaining=0;for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++)if(map[y][x]===0)pelletsRemaining++;for(const p of [{x:1,y:1},{x:17,y:1},{x:1,y:19},{x:17,y:19}])if(map[p.y][p.x]===0){map[p.y][p.x]=3;pelletsRemaining--}}
+function updateUI(){document.getElementById("score").textContent=score;document.getElementById("level").textContent=level;document.getElementById("highScore").textContent=highScore;document.getElementById("lives").textContent="❤️".repeat(lives)+"🖤".repeat(3-lives)}
+function addScore(n){score+=n;if(score>highScore){highScore=score;localStorage.setItem("pacmanHighScore",highScore)}updateUI()}
+function isWall(x,y){if(y<0||y>=ROWS)return true;if(x<0||x>=COLS)return false;return map[y][x]===1}
+function canMove(o,dx,dy,speed=2){const nx=o.x+dx*speed,ny=o.y+dy*speed;if(nx<0||nx+TILE>canvas.width)return true;const l=Math.floor(nx/TILE),r=Math.floor((nx+TILE-1)/TILE),t=Math.floor(ny/TILE),b=Math.floor((ny+TILE-1)/TILE);return !isWall(l,t)&&!isWall(r,t)&&!isWall(l,b)&&!isWall(r,b)}
+class Pacman{
+ constructor(){this.radius=10;this.mouth=.2;this.mouthSpeed=.025;this.reset()}
+ reset(){this.x=9*TILE;this.y=16*TILE;this.dx=0;this.dy=0;this.ndx=0;this.ndy=0}
+ aligned(){return this.x%TILE===0&&this.y%TILE===0}
+ move(){if(this.aligned()&&canMove(this,this.ndx,this.ndy)){this.dx=this.ndx;this.dy=this.ndy}if(!canMove(this,this.dx,this.dy))this.dx=this.dy=0;this.x+=this.dx*2;this.y+=this.dy*2;if(this.x<-TILE)this.x=canvas.width;if(this.x>canvas.width)this.x=-TILE;this.eat();this.mouth+=this.mouthSpeed;if(this.mouth>.43||this.mouth<.04)this.mouthSpeed=-this.mouthSpeed}
+ eat(){if(!this.aligned())return;const x=Math.floor(this.x/TILE),y=Math.floor(this.y/TILE),tile=map[y]?.[x];if(tile===0){map[y][x]=2;pelletsRemaining--;addScore(10);playSound(520,.04)}else if(tile===3){map[y][x]=2;pelletsRemaining--;addScore(50);powerMode=true;powerTimer=7000;playSound(180,.15,"sawtooth")}if(pelletsRemaining<=0)nextLevel()}
+ draw(){let a=0;if(this.dx<0)a=Math.PI;if(this.dy>0)a=Math.PI/2;if(this.dy<0)a=-Math.PI/2;ctx.beginPath();ctx.moveTo(this.x+10,this.y+10);ctx.arc(this.x+10,this.y+10,8,a+this.mouth,a+Math.PI*2-this.mouth);ctx.closePath();ctx.fillStyle="#ffe600";ctx.fill()}
+}
+class Ghost{
+ constructor(x,y,color,name){this.sx=x;this.sy=y;this.color=color;this.name=name;this.reset()}
+ reset(){this.x=this.sx*TILE;this.y=this.sy*TILE;this.dx=0;this.dy=-1}
+ aligned(){return this.x%TILE===0&&this.y%TILE===0}
+ move(i){const speed=1.5+Math.min(level*.15,1);if(this.aligned()){let opts=[{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0}].filter(d=>canMove(this,d.x,d.y,speed));const rev=opts.filter(d=>d.x!==-this.dx||d.y!==-this.dy);if(rev.length)opts=rev;if(opts.length){let choice;if(powerMode){opts.sort((a,b)=>distance(this,b)-distance(this,a));choice=opts[0]}else if(i<2){opts.sort((a,b)=>targetDistance(this,a,i)-targetDistance(this,b,i));choice=opts[0]}else choice=opts[Math.floor(Math.random()*opts.length)];this.dx=choice.x;this.dy=choice.y}}this.x+=this.dx*speed;this.y+=this.dy*speed;if(this.x<-TILE)this.x=canvas.width;if(this.x>canvas.width)this.x=-TILE}
+ draw(){const x=this.x+2,y=this.y+2;ctx.fillStyle=powerMode?"#315bff":this.color;ctx.beginPath();ctx.arc(x+8,y+8,8,Math.PI,0);ctx.lineTo(x+16,y+18);ctx.lineTo(x+12,y+15);ctx.lineTo(x+8,y+18);ctx.lineTo(x+4,y+15);ctx.lineTo(x,y+18);ctx.closePath();ctx.fill();ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(x+5,y+8,2.7,0,Math.PI*2);ctx.arc(x+11,y+8,2.7,0,Math.PI*2);ctx.fill();ctx.fillStyle="#163dff";ctx.beginPath();ctx.arc(x+5,y+8,1.2,0,Math.PI*2);ctx.arc(x+11,y+8,1.2,0,Math.PI*2);ctx.fill()}
+}
+function distance(g,d){return Math.hypot(pacman.x-(g.x+d.x*TILE),pacman.y-(g.y+d.y*TILE))}
+function targetDistance(g,d,i){const tx=pacman.x+(i===1?pacman.ndx*3*TILE:0),ty=pacman.y+(i===1?pacman.ndy*3*TILE:0);return Math.hypot(tx-(g.x+d.x*TILE),ty-(g.y+d.y*TILE))}
+const pacman=new Pacman();
+const ghosts=[new Ghost(9,9,"#ff3333","Blinky"),new Ghost(8,10,"#ff8bd1","Pinky"),new Ghost(10,10,"#32e5e5","Inky"),new Ghost(9,10,"#ffb852","Clyde")];
+function drawMap(){ctx.fillStyle="#000";ctx.fillRect(0,0,canvas.width,canvas.height);for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){const t=map[y][x];if(t===1){ctx.fillStyle="#174cff";ctx.fillRect(x*TILE,y*TILE,TILE,TILE);ctx.strokeStyle="#00177d";ctx.strokeRect(x*TILE+2,y*TILE+2,TILE-4,TILE-4)}else if(t===0||t===3){ctx.beginPath();ctx.arc(x*TILE+10,y*TILE+10,t===3?6:2.5,0,Math.PI*2);ctx.fillStyle=t===3?"#fff":"#ffb8ae";ctx.fill()}}}
+function draw(){drawMap();pacman.draw();ghosts.forEach(g=>g.draw())}
+function overlay(title,sub){ctx.fillStyle="rgba(0,0,0,.78)";ctx.fillRect(30,155,320,105);ctx.textAlign="center";ctx.fillStyle="#ffe600";ctx.font="bold 29px Courier New";ctx.fillText(title,190,200);ctx.fillStyle="#fff";ctx.font="15px Courier New";ctx.fillText(sub,190,230);ctx.textAlign="left"}
+function checkCollisions(){for(const g of ghosts){if(Math.hypot(pacman.x-g.x,pacman.y-g.y)<TILE*.72){if(powerMode){addScore(200);g.reset();playSound(750,.12)}else{loseLife();return}}}}
+function resetPositions(){pacman.reset();ghosts.forEach(g=>g.reset())}
+function loseLife(){if(!gameRunning)return;gameRunning=false;lives--;updateUI();playSound(90,.3,"sawtooth");if(lives<=0){gameOver();return}document.getElementById("message").textContent="💥 ¡Perdiste una vida! Pulsa START";setTimeout(()=>{if(lives>0&&!gameFinished){resetPositions();powerMode=false;powerTimer=0;document.getElementById("message").textContent="Pulsa START para continuar";draw()}},850)}
+function gameOver(){gameFinished=true;gameRunning=false;document.getElementById("message").textContent="GAME OVER — Pulsa REINICIAR";draw();overlay("GAME OVER","Puntos: "+score)}
+function nextLevel(){level++;addScore(500);playSound(900,.2);resetMap();resetPositions();powerMode=false;powerTimer=0;gameRunning=false;document.getElementById("message").textContent="¡NIVEL "+level+"! Pulsa START";updateUI();draw();overlay("NIVEL "+level,"¡Sigue jugando!")}
+function loop(timestamp){if(!gameRunning||paused)return;const dt=Math.min(timestamp-lastTime,50);lastTime=timestamp;if(powerMode){powerTimer-=dt;if(powerTimer<=0){powerMode=false;powerTimer=0}}pacman.move();ghosts.forEach((g,i)=>g.move(i));checkCollisions();if(gameRunning){draw();animationId=requestAnimationFrame(loop)}}
+function startGame(){initAudio();if(lives<=0||gameFinished){score=0;level=1;lives=3;gameFinished=false;resetMap();resetPositions();updateUI()}if(gameRunning&&!paused)return;paused=false;gameRunning=true;document.getElementById("message").textContent="";cancelAnimationFrame(animationId);lastTime=performance.now();animationId=requestAnimationFrame(loop)}
+function togglePause(){if(!gameRunning&&!paused)return;paused=!paused;if(paused){gameRunning=false;document.getElementById("message").textContent="⏸ PAUSA";draw();overlay("PAUSA","Pulsa PAUSA para seguir")}else{gameRunning=true;document.getElementById("message").textContent="";lastTime=performance.now();animationId=requestAnimationFrame(loop)}}
+function restartGame(){cancelAnimationFrame(animationId);score=0;level=1;lives=3;gameRunning=false;paused=false;gameFinished=false;powerMode=false;powerTimer=0;resetMap();resetPositions();updateUI();document.getElementById("message").textContent="Pulsa START para comenzar";draw();overlay("PAC-MAN","Pulsa START")}
+function setDirection(dir){initAudio();const d={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]}[dir];pacman.ndx=d[0];pacman.ndy=d[1];if(!gameRunning&&!paused&&lives>0&&!gameFinished)startGame()}
+window.addEventListener("keydown",e=>{const k=e.key.toLowerCase(),keys={arrowup:"up",w:"up",arrowdown:"down",s:"down",arrowleft:"left",a:"left",arrowright:"right",d:"right"};if(keys[k]){e.preventDefault();setDirection(keys[k])}if(k==="p")togglePause()});
+document.querySelectorAll("[data-direction]").forEach(b=>b.addEventListener("pointerdown",e=>{e.preventDefault();setDirection(b.dataset.direction)}));
+document.getElementById("startButton").addEventListener("click",startGame);
+document.getElementById("pauseButton").addEventListener("click",togglePause);
+document.getElementById("restartButton").addEventListener("click",restartGame);
+resetMap();resetPositions();updateUI();draw();overlay("PAC-MAN","Pulsa START");
+</script>
+</body>
+</html>
